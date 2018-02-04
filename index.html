@@ -1,0 +1,52 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>pico publish</title>
+  <link rel="stylesheet" type="text/css" href="static/application.css">
+</head>
+<body>
+  <div class="header">
+    <h3>Sequential Read Pico Publish</h3>
+    <div style="float:right; padding-right:20px;">
+      <a href="https://git.sequentialread.com/forest/pico-publish">source code</a>
+    </div>
+  </div>
+  <div class="header-shadow"></div>
+  <div class="splash content">
+    <h3>Publish a File:</h3>
+
+    <div>
+      <label for="file">File</label>
+      <input type="file" id="file"></input>
+    </div>
+    <div>
+      <label for="filename">Filename (optional)</label>
+      <input id="filename" type="text"></input>
+    </div>
+    <div>
+      <label for="content-type">Content-Type (optional)</label>
+      <input id="content-type" type="text"></input>
+    </div>
+    <div>
+      <button id="upload-button" style="float:right;">
+        Publish
+      </button>
+    </div>
+    <br/><br/>
+  </div>
+
+  <div class="modal-container" id="modal-container" style="display:none;">
+    <div class="modal content" >
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+      <div id="modal-footer" style="height:50px;"></div>
+    </div>
+  </div>
+  <div class="modal-container" id="progress-container" style="display:none;">
+    <div class="loader">loading</div>
+  </div>
+
+  <script src="static/application.js"></script>
+</body>
+</html>
