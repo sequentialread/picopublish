@@ -80,6 +80,7 @@ window.picoPublish = {};
   app.filePoster = new (function FilePoster(modalService) {
 
     var baseUrl = "/files";
+    var timeoutMilliseconds = 30000;
 
     var requestsCurrentlyInFlight = 0;
 
@@ -127,7 +128,7 @@ window.picoPublish = {};
         };
 
         httpRequest.open(method, url);
-        httpRequest.timeout = 2000;
+        httpRequest.timeout = timeoutMilliseconds;
 
         Object.keys(headers)
           .filter(key => key.toLowerCase() != 'host' && key.toLowerCase() != 'content-length')
