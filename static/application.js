@@ -282,7 +282,7 @@ window.picoPublish = {};
                 }
                 modalService.open(
                   "Success",
-                  `<a href="${window.location}files/${filenameInput.value}">${window.location}files/${filenameInput.value}</a>`,
+                  `<a href="${window.location}files/${linkPath}">${window.location}files/${filenameInput.value}</a>`,
                   (resolve, reject) => {},
                   [{
                     innerHTML: "Ok",
