@@ -278,11 +278,11 @@ window.picoPublish = {};
                 window.localStorage.setItem('pico-publish-password', password);
                 var linkPath = filenameInput.value;
                 if(extractArchive.checked) {
-                  linkPath = `${filenameInput.value}/${filenameInput.value.replace('.zip', '')}`
+                  linkPath = filenameInput.value.replace('.zip', '')
                 }
                 modalService.open(
                   "Success",
-                  `<a href="${window.location}files/${linkPath}">${window.location}files/${filenameInput.value}</a>`,
+                  `<a href="${window.location}files/${linkPath}">${window.location}files/${linkPath}</a>`,
                   (resolve, reject) => {},
                   [{
                     innerHTML: "Ok",

@@ -116,6 +116,19 @@ func files(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "Unauthorized.", 401)
 		} else {
 			if request.Header.Get("X-Extract-Archive") == "true" {
+
+				if strings.HasSuffix(fullFilePath, ".zip") {
+					fullFilePath = fullFilePath[0 : len(fullFilePath)-len(".zip")]
+				}
+
+				_, err := os.Stat(fullFilePath)
+				if err == nil {
+					response.WriteHeader(400)
+					fmt.Print("400 bad request: " + fullFilePath + " already exists. \n\n")
+					fmt.Fprint(response, "400 bad request: a file named \""+filename+"\" already exists.")
+					return
+				}
+
 				bytez, err := ioutil.ReadAll(request.Body)
 				if err != nil {
 					response.WriteHeader(500)
@@ -199,6 +212,8 @@ func main() {
 
 func Unzip(reader *zip.Reader, dest string) error {
 
+	destSplit := strings.Split(dest, "/")
+
 	os.MkdirAll(dest, 0755)
 	//fmt.Printf("os.MkdirAll(%s, 0755)\n", dest)
 
@@ -214,7 +229,22 @@ func Unzip(reader *zip.Reader, dest string) error {
 			}
 		}()
 
-		path := filepath.Join(dest, f.Name)
+		fileName := f.Name
+		rootFolderName := destSplit[len(destSplit)-1] + "/"
+		//fmt.Printf("fileName: %s, rootFolderName: %s\n", fileName, rootFolderName)
+		if strings.HasPrefix(fileName, rootFolderName) {
+			fileName = fileName[len(rootFolderName):]
+			//fmt.Printf("fileName mod: %s, (%s)\n", fileName, filepath.Join(dest, fileName))
+		} else {
+			rootFolderName = destSplit[len(destSplit)-1]
+			//fmt.Printf("fileName: %s, rootFolderName: %s\n", fileName, rootFolderName)
+			if strings.HasPrefix(fileName, rootFolderName) {
+				fileName = fileName[len(rootFolderName):]
+				//fmt.Printf("fileName mod: %s, (%s)\n", fileName, filepath.Join(dest, fileName))
+			}
+		}
+
+		path := filepath.Join(dest, fileName)
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(path, f.Mode())
