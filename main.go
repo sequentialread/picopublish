@@ -41,11 +41,9 @@ func indexHtml(response http.ResponseWriter, request *http.Request) {
 }
 
 func files(response http.ResponseWriter, request *http.Request) {
-	var filename string
-	var pathElements = strings.Split(request.RequestURI, "/")
-	filename = pathElements[len(pathElements)-1]
+	filename := strings.Replace(request.RequestURI, "files/", "", 1)
 
-	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+	if strings.Contains(filename, "..") || strings.Contains(filename, "\\") {
 		response.WriteHeader(404)
 		fmt.Print("illegal file name: " + filename + "\n\n")
 		fmt.Fprint(response, "illegal file name.")
@@ -56,12 +54,24 @@ func files(response http.ResponseWriter, request *http.Request) {
 	contentTypeFilePath := fullFilePath + ".content-type"
 	if request.Method == "GET" {
 
-		_, err := os.Stat(fullFilePath)
+		stat, err := os.Stat(fullFilePath)
 		if err != nil {
 			response.WriteHeader(404)
 			fmt.Print("404 file not found: " + fullFilePath + "\n\n")
 			fmt.Fprint(response, "404 file not found")
 			return
+		}
+
+		if stat.IsDir() {
+			_, err := os.Stat(fullFilePath + "/index.html")
+			if err == nil {
+				response.Header().Add("Location", request.RequestURI+"/index.html")
+				response.WriteHeader(302)
+			} else {
+				response.WriteHeader(404)
+				fmt.Print("404 file not found: " + fullFilePath + " (dir) \n\n")
+				fmt.Fprint(response, "404 file not found")
+			}
 		}
 
 		file, err := os.Open(fullFilePath)
@@ -107,7 +117,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 		} else {
 			if request.Header.Get("X-Extract-Archive") == "true" {
 				bytez, err := ioutil.ReadAll(request.Body)
-				if err == nil {
+				if err != nil {
 					response.WriteHeader(500)
 					fmt.Printf("500 bad request: error reading request body: %s \n\n", err)
 					fmt.Fprint(response, "500 error reading request body.")
@@ -125,7 +135,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				}
 
 				err = Unzip(zipReader, fullFilePath)
-				if err == nil {
+				if err != nil {
 					response.WriteHeader(400)
 					fmt.Printf("400 bad request: error reading zip file: %s \n\n", err)
 					fmt.Fprint(response, "400 bad request: error reading zip file.")

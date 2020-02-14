@@ -200,24 +200,31 @@ window.picoPublish = {};
 (function(app, window, document, undefined){
   app.mainController = new (function MainContrller(modalService, filePoster) {
 
-    document.getElementById("upload-button").addEventListener('click', () => {
-      var fileInput = document.getElementById("file");
-      var filenameInput = document.getElementById("filename");
-      var contentTypeInput = document.getElementById("content-type");
+    var fileInput = document.getElementById("file");
+    var filenameInput = document.getElementById("filename");
+    var contentTypeInput = document.getElementById("content-type");
+    var uploadButton = document.getElementById("upload-button");
 
-      var extractArchive = document.getElementById("extract-archive");
-      var extractArchiveContainer = document.getElementById("extract-archive-container");
+    var extractArchive = document.getElementById("extract-archive");
+    var extractArchiveContainer = document.getElementById("extract-archive-container");
 
-      fileInput.onchange = () => {
-        filenameInput.value = fileInput.files[0].name;
-        contentTypeInput.value = fileInput.files[0].type;
-      };
+    var handleContentTypeChanged = () => {
+      const isArchive = contentTypeInput.value == 'application/zip';
+      extractArchive.checked = extractArchive.checked && isArchive;
+      extractArchiveContainer.style.display = isArchive ? 'block' : 'none';
+    };
 
-      contentTypeInput.onchange = () => {
-        const isArchive = contentTypeInput.value == 'application/zip';
-        extractArchive.checked = extractArchive.checked && isArchive;
-        extractArchiveContainer.style.display = isArchive ? 'block' : 'none';
-      }
+    fileInput.onchange = () => {
+      filenameInput.value = fileInput.files[0].name;
+      contentTypeInput.value = fileInput.files[0].type;
+      handleContentTypeChanged();
+    };
+
+    contentTypeInput.onchange = () => handleContentTypeChanged();
+    contentTypeInput.onkeyup = () => handleContentTypeChanged();
+
+    uploadButton.addEventListener('click', () => {
+
 
       if(fileInput.files.length == 0 || fileInput.files.length > 1) {
         modalService.open(
@@ -269,6 +276,10 @@ window.picoPublish = {};
           filePoster.post(filenameInput.value, postFileHeaders, fileInput.files[0])
             .then((responseText) => {
                 window.localStorage.setItem('pico-publish-password', password);
+                var linkPath = filenameInput.value;
+                if(extractArchive.checked) {
+                  linkPath = `${filenameInput.value}/${filenameInput.value.replace('.zip', '')}`
+                }
                 modalService.open(
                   "Success",
                   `<a href="${window.location}files/${filenameInput.value}">${window.location}files/${filenameInput.value}</a>`,
@@ -281,7 +292,7 @@ window.picoPublish = {};
                 );
               },
               (responseText) => {
-                if(responseText.toLowerCase.includes('unauthorized')) {
+                if(responseText.toLowerCase().includes('unauthorized')) {
                   window.localStorage.setItem('pico-publish-password', '');
                 }
                 modalService.open(
