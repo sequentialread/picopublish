@@ -80,7 +80,7 @@ window.picoPublish = {};
   app.filePoster = new (function FilePoster(modalService) {
 
     var baseUrl = "/files";
-    var timeoutMilliseconds = 30000;
+    var timeoutMilliseconds = 120000;
 
     var requestsCurrentlyInFlight = 0;
 
@@ -204,6 +204,21 @@ window.picoPublish = {};
       var fileInput = document.getElementById("file");
       var filenameInput = document.getElementById("filename");
       var contentTypeInput = document.getElementById("content-type");
+
+      var extractArchive = document.getElementById("extract-archive");
+      var extractArchiveContainer = document.getElementById("extract-archive-container");
+
+      fileInput.onchange = () => {
+        filenameInput.value = fileInput.files[0].name;
+        contentTypeInput.value = fileInput.files[0].type;
+      };
+
+      contentTypeInput.onchange = () => {
+        const isArchive = contentTypeInput.value == 'application/zip';
+        extractArchive.checked = extractArchive.checked && isArchive;
+        extractArchiveContainer.style.display = isArchive ? 'block' : 'none';
+      }
+
       if(fileInput.files.length == 0 || fileInput.files.length > 1) {
         modalService.open(
           "Unsupported Operation",
@@ -217,38 +232,43 @@ window.picoPublish = {};
           }]
         );
       } else {
-
-        if(filenameInput.value.replace(' ', '').length < 3 || filenameInput.value.indexOf('/') > -1 || filenameInput.value.indexOf('\\') > -1 ) {
-          filenameInput.value = fileInput.files[0].name;
+        const password = window.localStorage.getItem('pico-publish-password');
+        let getPasswordPromise;
+        if((password || '') != '') {
+          getPasswordPromise = Promise.resolve(password);
+        } else {
+          getPasswordPromise = modalService.open(
+            "Password",
+            `
+            <input type="password" id="password"></input>
+            `,
+            (resolve, reject) => {
+              document.getElementById("password").focus();
+            },
+            [{
+              innerHTML: "Cancel",
+              escapeKey: true,
+              onclick: (resolve, reject) => reject()
+            },
+            {
+              innerHTML: "Ok",
+              enterKey: true,
+              onclick: (resolve, reject) => {
+                resolve(document.getElementById("password").value);
+              }
+            }]
+          );
         }
 
-        if(contentTypeInput.value.replace(' ', '').length < 3 ) {
-          contentTypeInput.value = fileInput.files[0].type;
-        }
-
-        modalService.open(
-          "Password",
-          `
-          <input type="password" id="password"></input>
-          `,
-          (resolve, reject) => {
-            document.getElementById("password").focus();
-          },
-          [{
-            innerHTML: "Cancel",
-            escapeKey: true,
-            onclick: (resolve, reject) => reject()
-          },
-          {
-            innerHTML: "Ok",
-            enterKey: true,
-            onclick: (resolve, reject) => {
-              resolve(document.getElementById("password").value);
-            }
-          }]
-        ).then((password) => {
-          filePoster.post(filenameInput.value, {'Content-Type': contentTypeInput.value, 'Authorization': `Basic ${btoa(`admin:${password}`)}`}, fileInput.files[0])
+        getPasswordPromise.then((password) => {
+          const postFileHeaders = {
+            'X-Extract-Archive': extractArchive.checked ? "true" : "false",
+            'Content-Type': contentTypeInput.value, 
+            'Authorization': `Basic ${btoa(`admin:${password}`)}`
+          };
+          filePoster.post(filenameInput.value, postFileHeaders, fileInput.files[0])
             .then((responseText) => {
+                window.localStorage.setItem('pico-publish-password', password);
                 modalService.open(
                   "Success",
                   `<a href="${window.location}files/${filenameInput.value}">${window.location}files/${filenameInput.value}</a>`,
@@ -261,6 +281,9 @@ window.picoPublish = {};
                 );
               },
               (responseText) => {
+                if(responseText.toLowerCase.includes('unauthorized')) {
+                  window.localStorage.setItem('pico-publish-password', '');
+                }
                 modalService.open(
                   "Failure",
                   responseText,
