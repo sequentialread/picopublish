@@ -209,7 +209,7 @@ window.picoPublish = {};
     var extractArchiveContainer = document.getElementById("extract-archive-container");
 
     var handleContentTypeChanged = () => {
-      const isArchive = contentTypeInput.value == 'application/zip';
+      const isArchive = (contentTypeInput.value == 'application/zip' || contentTypeInput.value == 'application/x-zip-compressed');
       extractArchive.checked = extractArchive.checked && isArchive;
       extractArchiveContainer.style.display = isArchive ? 'block' : 'none';
     };
