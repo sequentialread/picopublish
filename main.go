@@ -231,17 +231,8 @@ func Unzip(reader *zip.Reader, dest string) error {
 
 		fileName := f.Name
 		rootFolderName := destSplit[len(destSplit)-1] + "/"
-		//fmt.Printf("fileName: %s, rootFolderName: %s\n", fileName, rootFolderName)
 		if strings.HasPrefix(fileName, rootFolderName) {
 			fileName = fileName[len(rootFolderName):]
-			//fmt.Printf("fileName mod: %s, (%s)\n", fileName, filepath.Join(dest, fileName))
-		} else {
-			rootFolderName = destSplit[len(destSplit)-1]
-			//fmt.Printf("fileName: %s, rootFolderName: %s\n", fileName, rootFolderName)
-			if strings.HasPrefix(fileName, rootFolderName) {
-				fileName = fileName[len(rootFolderName):]
-				//fmt.Printf("fileName mod: %s, (%s)\n", fileName, filepath.Join(dest, fileName))
-			}
 		}
 
 		path := filepath.Join(dest, fileName)
