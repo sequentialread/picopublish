@@ -5,12 +5,13 @@ ARG GO_BUILD_ARGS=
 
 RUN mkdir /build
 WORKDIR /build
-COPY . .
+COPY main.go /build/main.go
 RUN  go build -v $GO_BUILD_ARGS -o /build/picopublish .
 
 FROM alpine
 WORKDIR /app
-COPY --from=build /build/static /app/static
 COPY --from=build /build/picopublish /app/picopublish
+COPY ./static /app/static
+COPY ./index.html /app/index.html
 RUN chmod +x /app/picopublish
 ENTRYPOINT ["/app/picopublish"]
