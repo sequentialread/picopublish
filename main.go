@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -94,18 +93,13 @@ func files(response http.ResponseWriter, request *http.Request) {
 		}
 
 		contentTypeBytes, err := ioutil.ReadFile(contentTypeFilePath)
-		contentType := "text/plain"
-		nameSplitOnPeriod := strings.Split(fullFilePath, ".")
+		contentType := "application/octet-stream"
 		if err == nil && string(contentTypeBytes) != "" {
 			contentType = string(contentTypeBytes)
-		} else if len(nameSplitOnPeriod) > 1 {
-			byExtension := mime.TypeByExtension(fmt.Sprintf(".%s", nameSplitOnPeriod[len(nameSplitOnPeriod)-1]))
-			if byExtension != "" {
-				byExtensionSplitOnSemicolon := strings.Split(byExtension, ";")
-				if len(byExtensionSplitOnSemicolon) > 1 {
-					byExtension = byExtensionSplitOnSemicolon[0]
-				}
-				contentType = byExtension
+		} else {
+			contentType, err = GetFileContentType(file)
+			if err != nil {
+				contentType = "application/octet-stream"
 			}
 		}
 
@@ -304,16 +298,6 @@ func Unzip(reader *zip.Reader, dest string) error {
 			_, err = io.Copy(f, rc)
 			if err != nil {
 				return errors.Wrapf(err, "cant write file '%s'", fileName)
-			}
-
-			contentType, err := GetFileContentType(f)
-			if err != nil {
-				return errors.Wrapf(err, "cant get content type for '%s'", fileName)
-			}
-			contentTypeFilePath := path + ".content-type"
-			err = ioutil.WriteFile(contentTypeFilePath, []byte(contentType), 0644)
-			if err != nil {
-				return errors.Wrap(err, "cant write content type file")
 			}
 		}
 		return nil
