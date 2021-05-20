@@ -5,8 +5,10 @@ ARG GO_BUILD_ARGS=
 
 RUN mkdir /build
 WORKDIR /build
+COPY go.mod /build/go.mod
+COPY go.sum /build/go.sum
 COPY main.go /build/main.go
-RUN  go build -v $GO_BUILD_ARGS -o /build/picopublish .
+RUN  go build -v $GO_BUILD_ARGS -o /build/picopublish main.go
 
 FROM alpine
 WORKDIR /app

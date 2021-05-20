@@ -1,0 +1,5 @@
+module git.sequentialread.com/forest/picopublish
+
+go 1.16
+
+require git.sequentialread.com/forest/pkg-errors v0.9.2 // indirect
