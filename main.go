@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	errors "git.sequentialread.com/forest/pkg-errors"
 )
 
 var secretPassword = ""
@@ -69,7 +71,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				response.WriteHeader(302)
 			} else {
 				response.WriteHeader(404)
-				fmt.Print("404 file not found: " + fullFilePath + " (dir) \n\n")
+				fmt.Printf("404 file not found: %s (dir) \n\n", fullFilePath)
 				fmt.Fprint(response, "404 file not found")
 			}
 		}
@@ -77,7 +79,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 		file, err := os.Open(fullFilePath)
 		if err != nil {
 			response.WriteHeader(500)
-			fmt.Printf("500 error opening file: "+fullFilePath+" %s \n\n", err)
+			fmt.Printf("500 error opening file: %s %s \n\n", fullFilePath, err)
 			fmt.Fprint(response, "500 error opening file")
 			return
 		}
@@ -86,7 +88,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 		fileStat, err := file.Stat()
 		if err != nil {
 			response.WriteHeader(500)
-			fmt.Printf("500 error stat()-ing file: "+fullFilePath+" %s \n\n", err)
+			fmt.Printf("500 error stat()-ing file: %s %s \n\n", fullFilePath, err)
 			fmt.Fprint(response, "500 error stat()-ing file")
 			return
 		}
@@ -107,9 +109,56 @@ func files(response http.ResponseWriter, request *http.Request) {
 			}
 		}
 
+		response.Header().Add("accept-ranges", "bytes")
 		response.Header().Add("Content-Type", contentType)
-		response.Header().Add("Content-Length", strconv.Itoa(int(fileStat.Size())))
-		io.Copy(response, file)
+
+		if strings.HasPrefix(request.Header.Get("Range"), "bytes=") {
+			bytesSpecString := strings.TrimPrefix(request.Header.Get("Range"), "bytes=")
+
+			startByte := int64(0)
+			endByte := int64(-1)
+			var err error
+			if strings.HasSuffix(bytesSpecString, "-") {
+				startByte, err = strconv.ParseInt(bytesSpecString[:len(bytesSpecString)-1], 10, 64)
+			} else if strings.HasPrefix(bytesSpecString, "-") {
+				endByte, err = strconv.ParseInt(bytesSpecString[1:], 10, 64)
+			} else {
+				numbers := strings.Split(bytesSpecString, "-")
+				if len(numbers) != 2 {
+					err = errors.New("expected two numbers separated by a hyphen")
+				} else {
+					startByte, err = strconv.ParseInt(numbers[0], 10, 64)
+					if err == nil {
+						endByte, err = strconv.ParseInt(numbers[1], 10, 64)
+					}
+				}
+			}
+			if endByte == -1 {
+				endByte = fileStat.Size() - 1
+			}
+			if startByte > endByte {
+				err = errors.New("startByte > endByte")
+			}
+			if endByte > fileStat.Size() {
+				err = errors.New("endByte > fileStat.Size()")
+			}
+
+			if err != nil {
+				response.WriteHeader(400)
+				fmt.Printf("400 bad request: bad range header format: '%s': %s \n\n", request.Header.Get("Range"), err)
+				fmt.Fprint(response, "400 bad request: bad Range header format")
+				return
+			}
+
+			response.Header().Add("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startByte, endByte, fileStat.Size()))
+			response.Header().Add("Content-Length", strconv.FormatInt(endByte-startByte, 10))
+			sectionReader := io.NewSectionReader(file, startByte, endByte-startByte)
+			io.Copy(response, sectionReader)
+		} else {
+			response.Header().Add("Content-Length", strconv.FormatInt(fileStat.Size(), 10))
+			io.Copy(response, file)
+		}
+
 	} else if request.Method == "POST" {
 		_, requestPassword, _ := request.BasicAuth()
 		if secretPassword != "" && requestPassword != secretPassword {
@@ -150,8 +199,8 @@ func files(response http.ResponseWriter, request *http.Request) {
 				err = Unzip(zipReader, fullFilePath)
 				if err != nil {
 					response.WriteHeader(400)
-					fmt.Printf("400 bad request: error reading zip file: %s \n\n", err)
-					fmt.Fprint(response, "400 bad request: error reading zip file.")
+					fmt.Printf("400 bad request: error expanding zip file: %s \n\n", err)
+					fmt.Fprint(response, "400 bad request: error expanding zip file.")
 					return
 				}
 
@@ -246,17 +295,25 @@ func Unzip(reader *zip.Reader, dest string) error {
 			//fmt.Printf("os.OpenFile(%s, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, %o)\n", path, f.Mode())
 			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "cant open file '%s'", fileName)
 			}
 			defer func() {
-				if err := f.Close(); err != nil {
-					panic(err)
-				}
+				f.Close()
 			}()
 
 			_, err = io.Copy(f, rc)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "cant write file '%s'", fileName)
+			}
+
+			contentType, err := GetFileContentType(f)
+			if err != nil {
+				return errors.Wrapf(err, "cant get content type for '%s'", fileName)
+			}
+			contentTypeFilePath := path + ".content-type"
+			err = ioutil.WriteFile(contentTypeFilePath, []byte(contentType), 0644)
+			if err != nil {
+				return errors.Wrap(err, "cant write content type file")
 			}
 		}
 		return nil
@@ -273,4 +330,20 @@ func Unzip(reader *zip.Reader, dest string) error {
 	}
 
 	return nil
+}
+
+// https://golangcode.com/get-the-content-type-of-file/
+func GetFileContentType(out *os.File) (string, error) {
+
+	// Only the first 512 bytes are used to sniff the content type.
+	buffer := make([]byte, 512)
+
+	_, err := out.Read(buffer)
+	if err != nil {
+		return "", err
+	}
+
+	contentType := http.DetectContentType(buffer)
+
+	return contentType, nil
 }
