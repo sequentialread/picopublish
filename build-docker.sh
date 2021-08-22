@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-VERSION="0.1.9-test"
+VERSION="0.1.11-test6"
 
 rm -rf dockerbuild || true
 mkdir dockerbuild

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -70,7 +72,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				response.WriteHeader(302)
 			} else {
 				response.WriteHeader(404)
-				fmt.Printf("404 file not found: %s (dir) \n\n", fullFilePath)
+				log.Printf("404 file not found: %s (dir) \n\n", fullFilePath)
 				fmt.Fprint(response, "404 file not found")
 			}
 		}
@@ -78,7 +80,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 		file, err := os.Open(fullFilePath)
 		if err != nil {
 			response.WriteHeader(500)
-			fmt.Printf("500 error opening file: %s %s \n\n", fullFilePath, err)
+			log.Printf("500 error opening file: %s %s \n\n", fullFilePath, err)
 			fmt.Fprint(response, "500 error opening file")
 			return
 		}
@@ -87,7 +89,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 		fileStat, err := file.Stat()
 		if err != nil {
 			response.WriteHeader(500)
-			fmt.Printf("500 error stat()-ing file: %s %s \n\n", fullFilePath, err)
+			log.Printf("500 error stat()-ing file: %s %s \n\n", fullFilePath, err)
 			fmt.Fprint(response, "500 error stat()-ing file")
 			return
 		}
@@ -97,7 +99,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 		if err == nil && string(contentTypeBytes) != "" {
 			contentType = string(contentTypeBytes)
 		} else {
-			contentType, err = GetFileContentType(file)
+			contentType, err = GetFileContentType(filename, file)
 			if err != nil {
 				contentType = "application/octet-stream"
 			}
@@ -128,7 +130,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				}
 			}
 			if endByte == -1 {
-				endByte = fileStat.Size() - 1
+				endByte = fileStat.Size()
 			}
 			if startByte > endByte {
 				err = errors.New("startByte > endByte")
@@ -139,7 +141,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 
 			if err != nil {
 				response.WriteHeader(400)
-				fmt.Printf("400 bad request: bad range header format: '%s': %s \n\n", request.Header.Get("Range"), err)
+				log.Printf("400 bad request: bad range header format: '%s': %s \n\n", request.Header.Get("Range"), err)
 				fmt.Fprint(response, "400 bad request: bad Range header format")
 				return
 			}
@@ -148,6 +150,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 			response.Header().Add("Content-Length", strconv.FormatInt(endByte-startByte, 10))
 			sectionReader := io.NewSectionReader(file, startByte, endByte-startByte)
 			io.Copy(response, sectionReader)
+
 		} else {
 			response.Header().Add("Content-Length", strconv.FormatInt(fileStat.Size(), 10))
 			io.Copy(response, file)
@@ -175,17 +178,24 @@ func files(response http.ResponseWriter, request *http.Request) {
 				bytez, err := ioutil.ReadAll(request.Body)
 				if err != nil {
 					response.WriteHeader(500)
-					fmt.Printf("500 bad request: error reading request body: %s \n\n", err)
+					log.Printf("500 bad request: error reading request body: %s \n\n", err)
 					fmt.Fprint(response, "500 error reading request body.")
 					return
 				}
+
+				// log.Printf("Zip upload: len(bytez) = %d  \n", len(bytez))
+				// logBytez := bytez
+				// if len(logBytez) > 1000 {
+				// 	logBytez = logBytez[0:1000]
+				// }
+				// log.Printf("Zip upload: bytez = %s  \n", string(logBytez))
 
 				byteReader := bytes.NewReader(bytez)
 				readerAt := io.NewSectionReader(byteReader, 0, int64(len(bytez)))
 				zipReader, err := zip.NewReader(readerAt, int64(len(bytez)))
 				if err != nil {
 					response.WriteHeader(400)
-					fmt.Printf("400 error reading zip file: %s \n\n", err)
+					log.Printf("400 error reading zip file: %s \n\n", err)
 					fmt.Fprint(response, "400 error reading zip file")
 					return
 				}
@@ -193,7 +203,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				err = Unzip(zipReader, fullFilePath)
 				if err != nil {
 					response.WriteHeader(400)
-					fmt.Printf("400 bad request: error expanding zip file: %s \n\n", err)
+					log.Printf("400 bad request: error expanding zip file: %s \n\n", err)
 					fmt.Fprint(response, "400 bad request: error expanding zip file.")
 					return
 				}
@@ -210,7 +220,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				file, err := os.Create(fullFilePath)
 				if err != nil {
 					response.WriteHeader(500)
-					fmt.Printf("500 error opening file: "+fullFilePath+" %s \n\n", err)
+					log.Printf("500 error opening file: "+fullFilePath+" %s \n\n", err)
 					fmt.Fprint(response, "500 error opening file")
 					return
 				}
@@ -258,7 +268,7 @@ func Unzip(reader *zip.Reader, dest string) error {
 	destSplit := strings.Split(dest, "/")
 
 	os.MkdirAll(dest, 0755)
-	//fmt.Printf("os.MkdirAll(%s, 0755)\n", dest)
+	//log.Printf("os.MkdirAll(%s, 0755)\n", dest)
 
 	// Closure to address file descriptors issue with all the deferred .Close() methods
 	extractAndWriteFile := func(f *zip.File) error {
@@ -282,11 +292,11 @@ func Unzip(reader *zip.Reader, dest string) error {
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(path, f.Mode())
-			//fmt.Printf("os.MkdirAll(%s, %o)\n", path, f.Mode())
+			//log.Printf("os.MkdirAll(%s, %o)\n", path, f.Mode())
 		} else {
-			//fmt.Printf("os.MkdirAll(%s, %o)\n", filepath.Dir(path), f.Mode())
+			//log.Printf("os.MkdirAll(%s, %o)\n", filepath.Dir(path), f.Mode())
 			os.MkdirAll(filepath.Dir(path), f.Mode())
-			//fmt.Printf("os.OpenFile(%s, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, %o)\n", path, f.Mode())
+			//log.Printf("os.OpenFile(%s, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, %o)\n", path, f.Mode())
 			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 			if err != nil {
 				return errors.Wrapf(err, "cant open file '%s'", fileName)
@@ -316,8 +326,15 @@ func Unzip(reader *zip.Reader, dest string) error {
 	return nil
 }
 
+// if strings.HasSuffix(fullFilePath, ".css") {
+// 	contentType = "text/css"
+// }
+// if strings.HasSuffix(fullFilePath, ".svg") {
+// 	contentType = "image/svg"
+// }
+
 // https://golangcode.com/get-the-content-type-of-file/
-func GetFileContentType(out *os.File) (string, error) {
+func GetFileContentType(filename string, out *os.File) (string, error) {
 
 	// Only the first 512 bytes are used to sniff the content type.
 	buffer := make([]byte, 512)
@@ -328,6 +345,16 @@ func GetFileContentType(out *os.File) (string, error) {
 	}
 
 	contentType := http.DetectContentType(buffer)
+
+	_, err = out.Seek(0, 0)
+	if err != nil {
+		return "", err
+	}
+
+	if strings.Contains(filename, ".") && (strings.Contains(contentType, "text/plain") || strings.Contains(contentType, "octet-stream")) {
+		splitOnPeriod := strings.Split(filename, ".")
+		return mime.TypeByExtension(fmt.Sprintf(".%s", splitOnPeriod[len(splitOnPeriod)-1])), nil
+	}
 
 	return contentType, nil
 }
