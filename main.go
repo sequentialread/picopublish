@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	errors "git.sequentialread.com/forest/pkg-errors"
@@ -19,6 +18,7 @@ import (
 
 var secretPassword = ""
 var dataPath = ""
+var readFileHandler http.Handler
 
 func indexHtml(response http.ResponseWriter, request *http.Request) {
 	if request.URL.Path != "/" {
@@ -44,119 +44,20 @@ func indexHtml(response http.ResponseWriter, request *http.Request) {
 }
 
 func files(response http.ResponseWriter, request *http.Request) {
-	filename := strings.Replace(request.RequestURI, "files/", "", 1)
-
-	if strings.Contains(filename, "..") || strings.Contains(filename, "\\") {
-		response.WriteHeader(404)
-		fmt.Print("illegal file name: " + filename + "\n\n")
-		fmt.Fprint(response, "illegal file name.")
-		return
-	}
-
-	fullFilePath := filepath.Join(dataPath, filename)
-	contentTypeFilePath := fullFilePath + ".content-type"
 	if request.Method == "GET" {
-
-		stat, err := os.Stat(fullFilePath)
-		if err != nil {
-			response.WriteHeader(404)
-			fmt.Print("404 file not found: " + fullFilePath + "\n\n")
-			fmt.Fprint(response, "404 file not found")
-			return
-		}
-
-		if stat.IsDir() {
-			_, err := os.Stat(fullFilePath + "/index.html")
-			if err == nil {
-				response.Header().Add("Location", request.RequestURI+"/index.html")
-				response.WriteHeader(302)
-			} else {
-				response.WriteHeader(404)
-				log.Printf("404 file not found: %s (dir) \n\n", fullFilePath)
-				fmt.Fprint(response, "404 file not found")
-			}
-		}
-
-		file, err := os.Open(fullFilePath)
-		if err != nil {
-			response.WriteHeader(500)
-			log.Printf("500 error opening file: %s %s \n\n", fullFilePath, err)
-			fmt.Fprint(response, "500 error opening file")
-			return
-		}
-		defer file.Close()
-
-		fileStat, err := file.Stat()
-		if err != nil {
-			response.WriteHeader(500)
-			log.Printf("500 error stat()-ing file: %s %s \n\n", fullFilePath, err)
-			fmt.Fprint(response, "500 error stat()-ing file")
-			return
-		}
-
-		contentTypeBytes, err := ioutil.ReadFile(contentTypeFilePath)
-		contentType := "application/octet-stream"
-		if err == nil && string(contentTypeBytes) != "" {
-			contentType = string(contentTypeBytes)
-		} else {
-			contentType, err = GetFileContentType(filename, file)
-			if err != nil {
-				contentType = "application/octet-stream"
-			}
-		}
-
-		response.Header().Add("accept-ranges", "bytes")
-		response.Header().Add("Content-Type", contentType)
-
-		if strings.HasPrefix(request.Header.Get("Range"), "bytes=") {
-			bytesSpecString := strings.TrimPrefix(request.Header.Get("Range"), "bytes=")
-
-			startByte := int64(0)
-			endByte := int64(-1)
-			var err error
-			if strings.HasSuffix(bytesSpecString, "-") {
-				startByte, err = strconv.ParseInt(bytesSpecString[:len(bytesSpecString)-1], 10, 64)
-			} else if strings.HasPrefix(bytesSpecString, "-") {
-				endByte, err = strconv.ParseInt(bytesSpecString[1:], 10, 64)
-			} else {
-				numbers := strings.Split(bytesSpecString, "-")
-				if len(numbers) != 2 {
-					err = errors.New("expected two numbers separated by a hyphen")
-				} else {
-					startByte, err = strconv.ParseInt(numbers[0], 10, 64)
-					if err == nil {
-						endByte, err = strconv.ParseInt(numbers[1], 10, 64)
-					}
-				}
-			}
-			if endByte == -1 {
-				endByte = fileStat.Size()
-			}
-			if startByte > endByte {
-				err = errors.New("startByte > endByte")
-			}
-			if endByte > fileStat.Size() {
-				err = errors.New("endByte > fileStat.Size()")
-			}
-
-			if err != nil {
-				response.WriteHeader(400)
-				log.Printf("400 bad request: bad range header format: '%s': %s \n\n", request.Header.Get("Range"), err)
-				fmt.Fprint(response, "400 bad request: bad Range header format")
-				return
-			}
-
-			response.Header().Add("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startByte, endByte, fileStat.Size()))
-			response.Header().Add("Content-Length", strconv.FormatInt(endByte-startByte, 10))
-			sectionReader := io.NewSectionReader(file, startByte, endByte-startByte)
-			io.Copy(response, sectionReader)
-
-		} else {
-			response.Header().Add("Content-Length", strconv.FormatInt(fileStat.Size(), 10))
-			io.Copy(response, file)
-		}
-
+		readFileHandler.ServeHTTP(response, request)
 	} else if request.Method == "POST" {
+		filename := strings.Replace(request.RequestURI, "files/", "", 1)
+
+		if strings.Contains(filename, "..") || strings.Contains(filename, "\\") {
+			response.WriteHeader(404)
+			fmt.Print("illegal file name: " + filename + "\n\n")
+			fmt.Fprint(response, "illegal file name.")
+			return
+		}
+
+		fullFilePath := filepath.Join(dataPath, filename)
+
 		_, requestPassword, _ := request.BasicAuth()
 		if secretPassword != "" && requestPassword != secretPassword {
 			http.Error(response, "Unauthorized.", 401)
@@ -226,14 +127,14 @@ func files(response http.ResponseWriter, request *http.Request) {
 				}
 				defer file.Close()
 
-				if request.Header.Get("Content-Type") != "" {
-					err = ioutil.WriteFile(contentTypeFilePath, []byte(request.Header.Get("Content-Type")), 0644)
-					if err != nil {
-						response.WriteHeader(500)
-						fmt.Fprintf(response, "500 %s", err)
-						return
-					}
-				}
+				// if request.Header.Get("Content-Type") != "" {
+				// 	err = ioutil.WriteFile(contentTypeFilePath, []byte(request.Header.Get("Content-Type")), 0644)
+				// 	if err != nil {
+				// 		response.WriteHeader(500)
+				// 		fmt.Fprintf(response, "500 %s", err)
+				// 		return
+				// 	}
+				// }
 
 				io.Copy(file, request.Body)
 			}
@@ -254,6 +155,10 @@ func main() {
 
 	dataPath = filepath.Join(".", "data")
 	os.MkdirAll(dataPath, os.ModePerm)
+
+	// https://stackoverflow.com/questions/49589685/good-way-to-disable-directory-listing-with-http-fileserver-in-go
+	noDirectoryListingHTTPDir := justFilesFilesystem{fs: http.Dir(dataPath), readDirBatchSize: 20}
+	readFileHandler = http.StripPrefix("/files/", http.FileServer(noDirectoryListingHTTPDir))
 
 	http.HandleFunc("/files/", files)
 
@@ -357,4 +262,50 @@ func GetFileContentType(filename string, out *os.File) (string, error) {
 	}
 
 	return contentType, nil
+}
+
+type justFilesFilesystem struct {
+	fs http.FileSystem
+	// readDirBatchSize - configuration parameter for `Readdir` func
+	readDirBatchSize int
+}
+
+func (fs justFilesFilesystem) Open(name string) (http.File, error) {
+	f, err := fs.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return neuteredStatFile{File: f, readDirBatchSize: fs.readDirBatchSize}, nil
+}
+
+type neuteredStatFile struct {
+	http.File
+	readDirBatchSize int
+}
+
+func (e neuteredStatFile) Stat() (os.FileInfo, error) {
+	s, err := e.File.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if s.IsDir() {
+	LOOP:
+		for {
+			fl, err := e.File.Readdir(e.readDirBatchSize)
+			switch err {
+			case io.EOF:
+				break LOOP
+			case nil:
+				for _, f := range fl {
+					if f.Name() == "index.html" {
+						return s, err
+					}
+				}
+			default:
+				return nil, err
+			}
+		}
+		return nil, os.ErrNotExist
+	}
+	return s, err
 }
