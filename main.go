@@ -80,6 +80,10 @@ func main() {
 		panic(errors.New("can't start the app because can't parse PICOPUBLISH_CAPTCHA_PUBLIC_URL"))
 	}
 
+	disallowBotsToken = map[string]SolvedDisallowBotsChallenge{}
+	httpClient = &http.Client{
+		Timeout: time.Second * time.Duration(5),
+	}
 	loadCaptchaChallengesMutex = &sync.Mutex{}
 	captchaChallengesMutex = &sync.Mutex{}
 
@@ -90,7 +94,7 @@ func main() {
 
 	// https://stackoverflow.com/questions/49589685/good-way-to-disable-directory-listing-with-http-fileserver-in-go
 	noDirectoryListingHTTPDir := justFilesFilesystem{fs: http.Dir(dataPath), readDirBatchSize: 20}
-	readFileHandler = http.StripPrefix("/files/", http.FileServer(noDirectoryListingHTTPDir))
+	readFileHandler = http.FileServer(noDirectoryListingHTTPDir)
 
 	http.HandleFunc("/files/", files)
 
@@ -148,7 +152,7 @@ func files(response http.ResponseWriter, request *http.Request) {
 				// Ensure the captcha challenge has been solved by this user within the last day. If so, serve the file.
 				// Otherwise, redirect to a new challenge.
 				if getIdentityHash(*request) == solved.IdentityHash && time.Since(solved.Time) < time.Hour*24 {
-					http.StripPrefix(fmt.Sprintf("/%s/", fileFirstPathElement), readFileHandler).ServeHTTP(response, request)
+					http.StripPrefix(fmt.Sprintf("/files/%s/", fileFirstPathElement), readFileHandler).ServeHTTP(response, request)
 					return
 				} else {
 					http.Redirect(response, request, strings.Replace(request.RequestURI, fileFirstPathElement, getNewToken(), 1), 302)
@@ -186,12 +190,14 @@ func files(response http.ResponseWriter, request *http.Request) {
 					response.Write([]byte("500 internal server error"))
 					return
 				}
+				response.Header().Set("Content-Type", "text/html; charset=UTF-8")
 				response.Write(htmlBytes)
+				return
 			}
 		}
 
 		// default: just serve the dang file :D
-		readFileHandler.ServeHTTP(response, request)
+		http.StripPrefix("/files/", readFileHandler).ServeHTTP(response, request)
 
 	} else if request.Method == "POST" {
 
@@ -438,10 +444,10 @@ func getIdentityHash(request http.Request) string {
 		remoteAddrString = parsedRemoteAddr.IP.String()
 	}
 
-	log.Printf(
-		"\n\nresolveTCPAddr: %s, X-Forwarded-For: %s, X-Real-IP: %s\n\n",
-		remoteAddrString, request.Header.Get("X-Forwarded-For"), request.Header.Get("X-Real-IP"),
-	)
+	// log.Printf(
+	// 	"\n\nresolveTCPAddr: %s, X-Forwarded-For: %s, X-Real-IP: %s\n\n",
+	// 	remoteAddrString, request.Header.Get("X-Forwarded-For"), request.Header.Get("X-Real-IP"),
+	// )
 	if request.Header.Get("X-Forwarded-For") != "" {
 		remoteAddrString = request.Header.Get("X-Forwarded-For")
 	} else if request.Header.Get("X-Real-IP") != "" {

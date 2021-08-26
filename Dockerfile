@@ -15,5 +15,6 @@ WORKDIR /app
 COPY --from=build /build/picopublish /app/picopublish
 COPY ./static /app/static
 COPY ./index.html /app/index.html
+COPY ./disallowbots.gotemplate.html /app/disallowbots.gotemplate.html
 RUN chmod +x /app/picopublish
 ENTRYPOINT ["/app/picopublish"]
