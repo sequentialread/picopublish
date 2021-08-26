@@ -58,7 +58,7 @@ func main() {
 
 	captchaAPIToken = os.ExpandEnv("$PICOPUBLISH_CAPTCHA_API_TOKEN")
 	if captchaAPIToken == "" {
-		panic(errors.New("can't start the app, the CAPTCHA_API_TOKEN environment variable is required"))
+		log.Println("the CAPTCHA_API_TOKEN environment variable is not set, the captcha feature will not work.")
 	}
 
 	captchaAPIURLString := os.ExpandEnv("$PICOPUBLISH_CAPTCHA_API_URL")
@@ -101,7 +101,11 @@ func main() {
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
 	http.HandleFunc("/", indexHtml)
-	http.ListenAndServe(":8080", nil)
+
+	log.Println("📤📚 PicoPublish is about to start listening on port 8080 ")
+
+	err = http.ListenAndServe(":8080", nil)
+	panic(err)
 }
 
 func indexHtml(response http.ResponseWriter, request *http.Request) {
