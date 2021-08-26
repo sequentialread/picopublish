@@ -1,0 +1,80 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>picopublish</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style>
+    .main {
+      display: flex;
+      margin-top: 2rem;
+      margin-bottom: 2rem;
+      background-color: #aaa;
+
+    }
+  </style>
+  <script>
+    function myCreateElement(parent, tag, attr, textContent) {
+      const element = document.createElement(tag);
+      if(attr) {
+        Object.entries(attr).forEach(([k,v]) => {
+          if (v !== undefined) {
+            if(typeof v == 'function') {
+              element[k] = v;
+            } else if(typeof v == 'object') {
+              Object.entries(v).forEach(([k1,v1]) => {
+                element[k][k1] = v1;
+              });
+            } else {
+              element.setAttribute(k, v);
+            }
+          }
+        });
+      }
+      if(textContent) {
+        element.textContent = textContent;
+      }
+      parent.appendChild(element);
+      return element;
+    }
+  </script>
+</head>
+  
+<body>
+  <div class="header">
+    <h3>SequentialRead PicoPublish</h3>
+    <div style="float:right; padding-right:20px;">
+      <a href="https://git.sequentialread.com/forest/picopublish">source code</a>
+    </div>
+  </div>
+  <div class="header-shadow"></div>
+  <div class="splash content">
+    <h3>Please wait for a moment...</h3>
+
+    <form method="POST" action="">
+      <input type="text" name="item" />
+      <input type="hidden" name="challenge" value="{{ .Challenge }}" />
+      <input type="hidden" name="nonce" />
+      <div class="captcha-container" 
+          data-sqr-captcha-url="{{ .CaptchaURL }}" 
+          data-sqr-captcha-challenge="{{ .Challenge }}" 
+          data-sqr-captcha-callback="myCaptchaCallback">
+     </div>
+    </form>
+  </div>
+  <script>
+    window.myCaptchaCallback = (nonce) => {
+      document.querySelector("form input[name='nonce']").value = nonce;
+      setTimeout(function() {
+        document.querySelector("form").submit();
+      }, 500);
+    };
+  </script>
+  <script src="{{ .CaptchaURL }}/static/captcha.js"></script>
+  <script>
+    
+  </script>
+</body>
+</html>

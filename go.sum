@@ -1,2 +1,4 @@
 git.sequentialread.com/forest/pkg-errors v0.9.2 h1:j6pwbL6E+TmE7TD0tqRtGwuoCbCfO6ZR26Nv5nest9g=
 git.sequentialread.com/forest/pkg-errors v0.9.2/go.mod h1:8TkJ/f8xLWFIAid20aoqgDZcCj9QQt+FU+rk415XO1w=
+github.com/shengdoushi/base58 v1.0.0 h1:tGe4o6TmdXFJWoI31VoSWvuaKxf0Px3gqa3sUWhAxBs=
+github.com/shengdoushi/base58 v1.0.0/go.mod h1:m5uIILfzcKMw6238iWAhP4l3s5+uXyF3+bJKUNhAL9I=

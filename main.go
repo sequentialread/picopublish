@@ -3,22 +3,102 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"text/template"
+	"time"
 
 	errors "git.sequentialread.com/forest/pkg-errors"
+	"github.com/shengdoushi/base58"
 )
 
 var secretPassword = ""
+var captchaAPIToken = ""
 var dataPath = ""
 var readFileHandler http.Handler
+
+var httpClient *http.Client
+var captchaAPIURL *url.URL
+var captchaPublicURL *url.URL
+var captchaChallenges []string
+var loadCaptchaChallengesMutex *sync.Mutex
+var captchaChallengesMutex *sync.Mutex
+var loadCaptchaChallengesMutexIsProbablyLocked = false
+
+var disallowBotsToken map[string]SolvedDisallowBotsChallenge
+var matchDisallowBotsToken *regexp.Regexp
+
+const captchaDifficultyLevel = 5
+
+type SolvedDisallowBotsChallenge struct {
+	IdentityHash string
+	Time         time.Time
+}
+
+func main() {
+
+	secretPassword = os.ExpandEnv("$PICOPUBLISH_PASSWORD")
+	if secretPassword == "" {
+		panic(errors.New("can't start the app, the PICOPUBLISH_PASSWORD environment variable is required"))
+	}
+
+	captchaAPIToken = os.ExpandEnv("$PICOPUBLISH_CAPTCHA_API_TOKEN")
+	if captchaAPIToken == "" {
+		panic(errors.New("can't start the app, the CAPTCHA_API_TOKEN environment variable is required"))
+	}
+
+	captchaAPIURLString := os.ExpandEnv("$PICOPUBLISH_CAPTCHA_API_URL")
+	if captchaAPIURLString == "" {
+		captchaAPIURLString = "http://localhost:2370"
+	}
+	var err error
+	captchaAPIURL, err = url.Parse(captchaAPIURLString)
+	if err != nil {
+		panic(errors.New("can't start the app because can't parse PICOPUBLISH_CAPTCHA_API_URL"))
+	}
+
+	captchaPublicURLString := os.ExpandEnv("$PICOPUBLISH_CAPTCHA_PUBLIC_URL")
+	if captchaPublicURLString == "" {
+		captchaPublicURLString = "https://captcha.sequentialread.com"
+	}
+	captchaPublicURL, err = url.Parse(captchaPublicURLString)
+	if err != nil {
+		panic(errors.New("can't start the app because can't parse PICOPUBLISH_CAPTCHA_PUBLIC_URL"))
+	}
+
+	loadCaptchaChallengesMutex = &sync.Mutex{}
+	captchaChallengesMutex = &sync.Mutex{}
+
+	dataPath = filepath.Join(".", "data")
+	os.MkdirAll(dataPath, os.ModePerm)
+
+	matchDisallowBotsToken = regexp.MustCompile("^[a-zA-Z0-9]{8}$")
+
+	// https://stackoverflow.com/questions/49589685/good-way-to-disable-directory-listing-with-http-fileserver-in-go
+	noDirectoryListingHTTPDir := justFilesFilesystem{fs: http.Dir(dataPath), readDirBatchSize: 20}
+	readFileHandler = http.StripPrefix("/files/", http.FileServer(noDirectoryListingHTTPDir))
+
+	http.HandleFunc("/files/", files)
+
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
+
+	http.HandleFunc("/", indexHtml)
+	http.ListenAndServe(":8080", nil)
+}
 
 func indexHtml(response http.ResponseWriter, request *http.Request) {
 	if request.URL.Path != "/" {
@@ -44,16 +124,105 @@ func indexHtml(response http.ResponseWriter, request *http.Request) {
 }
 
 func files(response http.ResponseWriter, request *http.Request) {
+
+	filename := strings.Replace(request.RequestURI, "files/", "", 1)
+	fileFirstPathElement := filterStringsNonEmpty(strings.Split(filename, "/"))[0]
+
 	if request.Method == "GET" {
+
+		// if the $upload_name.disallowbots  file exists, then we redirect to the disallow bots handler with a random token
+		disallowBotsFlagPath := filepath.Join(dataPath, fmt.Sprintf("%s.disallowbots", fileFirstPathElement))
+		_, err := os.Stat(disallowBotsFlagPath)
+		if err == nil {
+			http.Redirect(response, request, strings.Replace(request.RequestURI, "files/", fmt.Sprintf("files/%s/", getNewToken()), 1), 302)
+			return
+		}
+
+		// If this happens, either we just got redirected, or we just solved the captcha challenge, or someone copy and pasted a link
+		// to a solved challenge.
+		if matchDisallowBotsToken.MatchString(fileFirstPathElement) {
+			solved, hasSolved := disallowBotsToken[fileFirstPathElement]
+
+			// If the captcha challenge has been solved, then
+			if hasSolved {
+				// Ensure the captcha challenge has been solved by this user within the last day. If so, serve the file.
+				// Otherwise, redirect to a new challenge.
+				if getIdentityHash(*request) == solved.IdentityHash && time.Since(solved.Time) < time.Hour*24 {
+					http.StripPrefix(fmt.Sprintf("/%s/", fileFirstPathElement), readFileHandler).ServeHTTP(response, request)
+					return
+				} else {
+					http.Redirect(response, request, strings.Replace(request.RequestURI, fileFirstPathElement, getNewToken(), 1), 302)
+					return
+				}
+			} else {
+				// if this captcha was never solved, then we can display the HTML page to solve it!
+
+				// if it looks like we will run out of challenges soon & not currently busy getting them,
+				// then kick off a goroutine to go get them in the background.
+				if len(captchaChallenges) > 0 && len(captchaChallenges) < 5 && !loadCaptchaChallengesMutexIsProbablyLocked {
+					go loadCaptchaChallenges(captchaAPIToken)
+				}
+
+				if captchaChallenges == nil || len(captchaChallenges) == 0 {
+					err = loadCaptchaChallenges(captchaAPIToken)
+					if err != nil {
+						log.Printf("loading captcha challenges failed: %v\n", err)
+						response.WriteHeader(500)
+						response.Write([]byte("captcha api error"))
+						return
+					}
+				}
+
+				var challenge string
+				captchaChallengesMutex.Lock()
+				challenge = captchaChallenges[0]
+				captchaChallenges = captchaChallenges[1:]
+				captchaChallengesMutex.Unlock()
+
+				htmlBytes, err := renderCaptchaPageTemplate(challenge)
+				if err != nil {
+					log.Printf("renderPageTemplate(): %+v", err)
+					response.WriteHeader(500)
+					response.Write([]byte("500 internal server error"))
+					return
+				}
+				response.Write(htmlBytes)
+			}
+		}
+
+		// default: just serve the dang file :D
 		readFileHandler.ServeHTTP(response, request)
+
 	} else if request.Method == "POST" {
-		filename := strings.Replace(request.RequestURI, "files/", "", 1)
 
 		if strings.Contains(filename, "..") || strings.Contains(filename, "\\") {
 			response.WriteHeader(404)
 			fmt.Print("illegal file name: " + filename + "\n\n")
 			fmt.Fprint(response, "illegal file name.")
 			return
+		}
+
+		if matchDisallowBotsToken.MatchString(fileFirstPathElement) {
+			err := request.ParseForm()
+			if err == nil {
+				challenge := request.Form.Get("challenge")
+				nonce := request.Form.Get("nonce")
+				if challenge != "" && nonce != "" {
+					err = validateCaptcha(captchaAPIToken, challenge, nonce)
+				} else {
+					err = errors.New("challenge and nonce are required")
+				}
+			}
+			if err != nil {
+				response.WriteHeader(400)
+				response.Write([]byte(fmt.Sprintf("400 bad request: %s", err)))
+				return
+			}
+			disallowBotsToken[fileFirstPathElement] = SolvedDisallowBotsChallenge{
+				IdentityHash: getIdentityHash(*request),
+				Time:         time.Now(),
+			}
+			http.Redirect(response, request, request.RequestURI, 302)
 		}
 
 		fullFilePath := filepath.Join(dataPath, filename)
@@ -127,16 +296,11 @@ func files(response http.ResponseWriter, request *http.Request) {
 				}
 				defer file.Close()
 
-				// if request.Header.Get("Content-Type") != "" {
-				// 	err = ioutil.WriteFile(contentTypeFilePath, []byte(request.Header.Get("Content-Type")), 0644)
-				// 	if err != nil {
-				// 		response.WriteHeader(500)
-				// 		fmt.Fprintf(response, "500 %s", err)
-				// 		return
-				// 	}
-				// }
-
 				io.Copy(file, request.Body)
+			}
+
+			if request.Header.Get("X-Disallow-Bots") == "true" {
+				ioutil.WriteFile(fmt.Sprintf("%s.disallowbots", fullFilePath), []byte("true"), 0644)
 			}
 		}
 	} else if request.Method == "DELETE" {
@@ -147,25 +311,6 @@ func files(response http.ResponseWriter, request *http.Request) {
 		response.WriteHeader(405)
 		fmt.Fprint(response, "405 Method Not Supported")
 	}
-}
-
-func main() {
-
-	secretPassword = os.ExpandEnv("$PICO_PUBLISH_PASSWORD")
-
-	dataPath = filepath.Join(".", "data")
-	os.MkdirAll(dataPath, os.ModePerm)
-
-	// https://stackoverflow.com/questions/49589685/good-way-to-disable-directory-listing-with-http-fileserver-in-go
-	noDirectoryListingHTTPDir := justFilesFilesystem{fs: http.Dir(dataPath), readDirBatchSize: 20}
-	readFileHandler = http.StripPrefix("/files/", http.FileServer(noDirectoryListingHTTPDir))
-
-	http.HandleFunc("/files/", files)
-
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
-
-	http.HandleFunc("/", indexHtml)
-	http.ListenAndServe(":8080", nil)
 }
 
 func Unzip(reader *zip.Reader, dest string) error {
@@ -231,39 +376,6 @@ func Unzip(reader *zip.Reader, dest string) error {
 	return nil
 }
 
-// if strings.HasSuffix(fullFilePath, ".css") {
-// 	contentType = "text/css"
-// }
-// if strings.HasSuffix(fullFilePath, ".svg") {
-// 	contentType = "image/svg"
-// }
-
-// https://golangcode.com/get-the-content-type-of-file/
-func GetFileContentType(filename string, out *os.File) (string, error) {
-
-	// Only the first 512 bytes are used to sniff the content type.
-	buffer := make([]byte, 512)
-
-	_, err := out.Read(buffer)
-	if err != nil {
-		return "", err
-	}
-
-	contentType := http.DetectContentType(buffer)
-
-	_, err = out.Seek(0, 0)
-	if err != nil {
-		return "", err
-	}
-
-	if strings.Contains(filename, ".") && (strings.Contains(contentType, "text/plain") || strings.Contains(contentType, "octet-stream")) {
-		splitOnPeriod := strings.Split(filename, ".")
-		return mime.TypeByExtension(fmt.Sprintf(".%s", splitOnPeriod[len(splitOnPeriod)-1])), nil
-	}
-
-	return contentType, nil
-}
-
 type justFilesFilesystem struct {
 	fs http.FileSystem
 	// readDirBatchSize - configuration parameter for `Readdir` func
@@ -308,4 +420,158 @@ func (e neuteredStatFile) Stat() (os.FileInfo, error) {
 		return nil, os.ErrNotExist
 	}
 	return s, err
+}
+
+func getNewToken() string {
+	randomBytesBuffer := make([]byte, 16)
+	rand.Read(randomBytesBuffer)
+	return base58.Encode(randomBytesBuffer, base58.BitcoinAlphabet)[0:8]
+}
+
+func getIdentityHash(request http.Request) string {
+
+	remoteAddrString := ""
+	parsedRemoteAddr, err := net.ResolveTCPAddr("tcp", request.RemoteAddr)
+	if err != nil {
+		log.Printf("net.ResolveTCPAddr(\"tcp\", request.RemoteAddr): %+v", err)
+	} else {
+		remoteAddrString = parsedRemoteAddr.IP.String()
+	}
+
+	log.Printf(
+		"\n\nresolveTCPAddr: %s, X-Forwarded-For: %s, X-Real-IP: %s\n\n",
+		remoteAddrString, request.Header.Get("X-Forwarded-For"), request.Header.Get("X-Real-IP"),
+	)
+	if request.Header.Get("X-Forwarded-For") != "" {
+		remoteAddrString = request.Header.Get("X-Forwarded-For")
+	} else if request.Header.Get("X-Real-IP") != "" {
+		remoteAddrString = request.Header.Get("X-Real-IP")
+	}
+
+	hashBytes := sha256.Sum256([]byte(fmt.Sprintf("%s.%s.Bzb2Z0bHkgeW9ndXJ0IG1vcnRvbiBkdW1teSByYWNrIG1vdGlv", remoteAddrString, request.UserAgent())))
+	return base58.Encode(hashBytes[8:16], base58.BitcoinAlphabet)
+}
+
+func filterStringsNonEmpty(input []string) []string {
+	toReturn := []string{}
+	for _, s := range input {
+		if strings.TrimSpace(s) != "" {
+			toReturn = append(toReturn, s)
+		}
+	}
+	return toReturn
+}
+
+func renderCaptchaPageTemplate(challenge string) ([]byte, error) {
+
+	// in a "real" application in production you would read the template file & parse it 1 time when the app starts
+	// I'm doing it for each request here just to make it easier to hack on it while its running 😇
+	htmlTemplateString, err := ioutil.ReadFile("disallowbots.gotemplate.html")
+	if err != nil {
+		return nil, errors.Wrap(err, "can't open the template file. Are you in the right directory? ")
+	}
+	pageTemplate, err := template.New("master").Parse(string(htmlTemplateString))
+	if err != nil {
+		return nil, errors.Wrap(err, "can't parse the template file: ")
+	}
+
+	// constructing an instance of an anonymous struct type to contain all the data
+	// that we need to pass to the template
+	pageData := struct {
+		Challenge  string
+		CaptchaURL string
+	}{
+		Challenge:  challenge,
+		CaptchaURL: captchaPublicURL.String(),
+	}
+	var outputBuffer bytes.Buffer
+	err = pageTemplate.Execute(&outputBuffer, pageData)
+	if err != nil {
+		return nil, errors.Wrap(err, "rendering page template failed: ")
+	}
+
+	return outputBuffer.Bytes(), nil
+}
+
+func loadCaptchaChallenges(apiToken string) error {
+	// make sure we only call this function once at a time.
+	loadCaptchaChallengesMutex.Lock()
+	loadCaptchaChallengesMutexIsProbablyLocked = true
+	defer (func() {
+		loadCaptchaChallengesMutexIsProbablyLocked = false
+		loadCaptchaChallengesMutex.Unlock()
+	})()
+
+	query := url.Values{}
+	query.Add("difficultyLevel", strconv.Itoa(captchaDifficultyLevel))
+
+	loadURL := url.URL{
+		Scheme:   captchaAPIURL.Scheme,
+		Host:     captchaAPIURL.Host,
+		Path:     filepath.Join(captchaAPIURL.Path, "GetChallenges"),
+		RawQuery: query.Encode(),
+	}
+
+	captchaRequest, err := http.NewRequest("POST", loadURL.String(), nil)
+	captchaRequest.Header.Add("Authorization", fmt.Sprintf("Bearer %s", apiToken))
+	if err != nil {
+		return err
+	}
+
+	response, err := httpClient.Do(captchaRequest)
+	if err != nil {
+		return err
+	}
+
+	responseBytes, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return err
+	}
+
+	if response.StatusCode != 200 {
+		return fmt.Errorf(
+			"load proof of work captcha challenges api returned http %d: %s",
+			response.StatusCode, string(responseBytes),
+		)
+	}
+
+	err = json.Unmarshal(responseBytes, &captchaChallenges)
+	if err != nil {
+		return err
+	}
+
+	if len(captchaChallenges) == 0 {
+		return errors.New("proof of work captcha challenges api returned empty array")
+	}
+
+	return nil
+}
+
+func validateCaptcha(apiToken, challenge, nonce string) error {
+	query := url.Values{}
+	query.Add("challenge", challenge)
+	query.Add("nonce", nonce)
+
+	verifyURL := url.URL{
+		Scheme:   captchaAPIURL.Scheme,
+		Host:     captchaAPIURL.Host,
+		Path:     filepath.Join(captchaAPIURL.Path, "Verify"),
+		RawQuery: query.Encode(),
+	}
+
+	captchaRequest, err := http.NewRequest("POST", verifyURL.String(), nil)
+	captchaRequest.Header.Add("Authorization", fmt.Sprintf("Bearer %s", apiToken))
+	if err != nil {
+		return err
+	}
+
+	response, err := httpClient.Do(captchaRequest)
+	if err != nil {
+		return err
+	}
+
+	if response.StatusCode != 200 {
+		return errors.New("proof of work captcha validation failed")
+	}
+	return nil
 }

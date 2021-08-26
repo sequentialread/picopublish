@@ -2,14 +2,14 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>pico publish</title>
+  <title>picopublish</title>
   <link rel="stylesheet" type="text/css" href="static/application.css">
 </head>
 <body>
   <div class="header">
-    <h3>Sequential Read Pico Publish</h3>
+    <h3>SequentialRead PicoPublish</h3>
     <div style="float:right; padding-right:20px;">
-      <a href="https://git.sequentialread.com/forest/pico-publish">source code</a>
+      <a href="https://git.sequentialread.com/forest/picopublish">source code</a>
     </div>
   </div>
   <div class="header-shadow"></div>
@@ -24,9 +24,13 @@
       <label for="filename">Filename (optional)</label>
       <input id="filename" type="text"></input>
     </div>
-    <div>
+    <div style="display: none;">
       <label for="content-type">Content-Type (optional)</label>
       <input id="content-type" type="text"></input>
+    </div>
+    <div>
+      <label for="disallow-bots">Disallow Bots</label>
+      <input id="disallow-bots" type="checkbox"></input>
     </div>
     <div style='display: none;' id="extract-archive-container">
       <label for="extract-archive">Extract Archive</label>

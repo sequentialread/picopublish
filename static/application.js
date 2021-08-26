@@ -203,6 +203,7 @@ window.picoPublish = {};
     var fileInput = document.getElementById("file");
     var filenameInput = document.getElementById("filename");
     var contentTypeInput = document.getElementById("content-type");
+    var disallowBotsInput = document.getElementById("disallow-bots");
     var uploadButton = document.getElementById("upload-button");
 
     var extractArchive = document.getElementById("extract-archive");
@@ -270,7 +271,7 @@ window.picoPublish = {};
         getPasswordPromise.then((password) => {
           const postFileHeaders = {
             'X-Extract-Archive': extractArchive.checked ? "true" : "false",
-            'Content-Type': contentTypeInput.value, 
+            'X-Disallow-Bots': disallowBotsInput.checked ? "true" : "false", 
             'Authorization': `Basic ${btoa(`admin:${password}`)}`
           };
           filePoster.post(filenameInput.value, postFileHeaders, fileInput.files[0])
