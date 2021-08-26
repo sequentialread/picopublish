@@ -581,7 +581,7 @@ func validateCaptcha(apiToken, challenge, nonce string) error {
 	}
 
 	if response.StatusCode != 200 {
-		return errors.New("proof of work captcha validation failed")
+		return errors.New("proof of work captcha validation failed. please try again.")
 	}
 	return nil
 }

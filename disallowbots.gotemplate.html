@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" type="text/css" href="/static/application.css">
   <link rel="stylesheet" type="text/css" href="{{ .CaptchaURL }}/static/captcha.css">
-  <script src="{{ .CaptchaURL }}/static/captcha.js"></script>
+  <script src="{{ .CaptchaURL }}/static/captcha.js?v=2"></script>
 </head>
   
 <body>
@@ -21,7 +21,7 @@
   <div class="splash content">
     <h3>Please wait for a moment...</h3>
 
-    <form method="POST" action="" style="font-size: 13px;">
+    <form method="POST" action="" style="font-size: 11px;">
       <input type="hidden" name="challenge" value="{{ .Challenge }}" />
       <input type="hidden" name="nonce" />
       <div class="captcha-container" 
