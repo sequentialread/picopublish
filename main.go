@@ -581,6 +581,12 @@ func validateCaptcha(apiToken, challenge, nonce string) error {
 	}
 
 	if response.StatusCode != 200 {
+		responseString := "http read error"
+		responseBytes, err := ioutil.ReadAll(response.Body)
+		if err == nil {
+			responseString = string(responseBytes)
+		}
+		log.Printf("proof of work captcha validation failed: challenge: %s nonce: %s, response: %s\n", challenge, nonce, responseString)
 		return errors.New("proof of work captcha validation failed. please try again.")
 	}
 	return nil
