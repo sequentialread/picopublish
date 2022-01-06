@@ -10,5 +10,5 @@ There is no "list files" endpoint. So long/unpredictable file names can be consi
 
 Uploading files requires entering a password. The password is saved in LocalStorage of your browser after you enter it the first time.
 
-Optionally supports [💥PoW! Captcha](https://git.sequentialread.com/forest/pow-captcha) to prevent bots from scanning the uploaded files. 
+Optionally supports [💥PoW! Captcha](https://git.sequentialread.com/forest/pow-captcha) to prevent bots from scraping the uploaded files. 
 
